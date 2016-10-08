@@ -6,7 +6,7 @@ link_directories(~/VisionWorks-1.4-Samples/3rdparty/glfw3/libs)
 link_directories(/usr/lib/aarch64-linux-gnu/tegra-egl)
 link_directories(/usr/local/cuda-7.0/lib64) 
 
-add_executable (${PROJECT_NAME} main.cpp)
+add_executable (${PROJECT_NAME} main.cpp iterative_motion_estimator.hpp iterative_motion_estimator.cpp)
 
 target_link_libraries(${PROJECT_NAME} ${CMAKE_THREAD_LIBS_INIT})
 target_link_libraries(${PROJECT_NAME} nvxio freetype glfw3 )

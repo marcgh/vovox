@@ -12,6 +12,8 @@
 #include "NVXIO/Application.hpp"
 #include "NVXIO/Utility.hpp"
 
+#include "iterative_motion_estimator.hpp"
+
 struct EventData
 {
     EventData(): alive(true), pause(false) {}
@@ -99,9 +101,47 @@ int main(int argc, char** argv)
     EventData eventData;
     render->setOnKeyboardEventCallback(keyboardEventCallback, &eventData);
 
+
     vx_image frame = vxCreateImage(context, config.frameWidth,
                                    config.frameHeight, config.format);
     NVXIO_CHECK_REFERENCE(frame);
+
+    //
+    // Create OpenVX Image to hold frames from video source
+    //
+
+    vx_image frameExemplar = vxCreateImage(context, config.frameWidth, config.frameHeight, VX_DF_IMAGE_RGBX);
+    NVXIO_CHECK_REFERENCE(frameExemplar);
+    
+    vx_delay frame_delay = vxCreateDelay(context, (vx_reference)frameExemplar, 2);
+    NVXIO_CHECK_REFERENCE(frame_delay);
+    vxReleaseImage(&frameExemplar);
+
+    vx_image prevFrame = (vx_image)vxGetReferenceFromDelay(frame_delay, -1);
+    vx_image currFrame = (vx_image)vxGetReferenceFromDelay(frame_delay, 0);
+
+    IterativeMotionEstimator ime(context);
+
+#if 0
+        //
+        // Create algorithm
+        //
+
+
+        nvxio::FrameSource::FrameStatus frameStatus;
+        do
+        {
+            frameStatus = frameSource->fetch(prevFrame);
+        } while (frameStatus == nvxio::FrameSource::TIMEOUT);
+        if (frameStatus == nvxio::FrameSource::CLOSED)
+        {
+            std::cerr << "Source has no frames" << std::endl;
+            return nvxio::Application::APP_EXIT_CODE_NO_FRAMESOURCE;
+        }
+
+        ime.init(prevFrame, currFrame, params);
+#endif
+
 
     nvxio::Render::TextBoxStyle style = {{255,255,255,255}, {0,0,0,127}, {10,10}};
 
@@ -168,3 +208,138 @@ int main(int argc, char** argv)
 }
 
 
+#if 0
+
+
+        //
+        // Main loop
+        //
+
+        std::unique_ptr<nvxio::SyncTimer> syncTimer = nvxio::createSyncTimer();
+        syncTimer->arm(1. / app.getFPSLimit());
+
+        nvx::Timer totalTimer;
+        totalTimer.tic();
+        double proc_ms = 0;
+        while (!eventData.stop)
+        {
+            if (!eventData.pause)
+            {
+                //
+                // Grab next frame
+                //
+
+                frameStatus = frameSource->fetch(currFrame);
+
+                if (frameStatus == nvxio::FrameSource::TIMEOUT)
+                    continue;
+
+                if (frameStatus == nvxio::FrameSource::CLOSED)
+                {
+                    if (!frameSource->open())
+                    {
+                        std::cerr << "Failed to reopen the source" << std::endl;
+                        break;
+                    }
+
+                    do
+                    {
+                        frameStatus = frameSource->fetch(prevFrame);
+                    } while (frameStatus == nvxio::FrameSource::TIMEOUT);
+                    if (frameStatus == nvxio::FrameSource::CLOSED)
+                    {
+                        std::cerr << "Source has no frames" << std::endl;
+                        return nvxio::Application::APP_EXIT_CODE_NO_FRAMESOURCE;
+                    }
+
+                    ime.init(prevFrame, currFrame, params);
+
+                    continue;
+                }
+
+                //
+                // Process
+                //
+
+                nvx::Timer procTimer;
+                procTimer.tic();
+
+                ime.process();
+
+                proc_ms = procTimer.toc();
+            }
+
+            double total_ms = totalTimer.toc();
+
+            std::cout << "Display Time : " << total_ms << " ms" << std::endl << std::endl;
+
+            syncTimer->synchronize();
+
+            total_ms = totalTimer.toc();
+
+            totalTimer.tic();
+
+            //
+            // Show performance statistics
+            //
+
+            if (!eventData.pause)
+            {
+                ime.printPerfs();
+            }
+
+            //
+            // Render
+            //
+
+            render->putImage(prevFrame);
+
+            nvxio::Render::MotionFieldStyle mfStyle = {
+                {  0u, 255u, 255u, 255u} // color
+            };
+
+            render->putMotionField(ime.getMotionField(), mfStyle);
+
+            std::ostringstream msg;
+            msg << std::fixed << std::setprecision(1);
+
+            msg << "Resolution: " << frameConfig.frameWidth << 'x' << frameConfig.frameHeight << std::endl;
+            msg << "Algorithm: " << proc_ms << " ms / " << 1000.0 / proc_ms << " FPS" << std::endl;
+            msg << "Display: " << total_ms  << " ms / " << 1000.0 / total_ms << " FPS" << std::endl;
+            msg << "Space - pause/resume" << std::endl;
+            msg << "Esc - close the sample";
+
+            nvxio::Render::TextBoxStyle textStyle = {
+                {255u, 255u, 255u, 255u}, // color
+                {0u,   0u,   0u, 127u}, // bgcolor
+                {10u, 10u} // origin
+            };
+
+            render->putTextViewport(msg.str(), textStyle);
+
+            if (!render->flush())
+            {
+                eventData.stop = true;
+            }
+
+            if (!eventData.pause)
+            {
+                vxAgeDelay(frame_delay);
+            }
+        }
+
+        //
+        // Release all objects
+        //
+
+        vxReleaseDelay(&frame_delay);
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return nvxio::Application::APP_EXIT_CODE_ERROR;
+    }
+
+    return nvxio::Application::APP_EXIT_CODE_SUCCESS;
+
+#endif
