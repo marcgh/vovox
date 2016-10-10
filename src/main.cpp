@@ -83,13 +83,11 @@ int main(int argc, char** argv)
     }
     config = source->getConfiguration();
 
-    //
-    // create scale down image for display
-    //
+    vx_image fullResImage = vxCreateImage(context, config.frameWidth, config.frameHeight, config.format /*VX_DF_IMAGE_RGBX*/);
+    NVXIO_CHECK_REFERENCE(fullResImage);
+
     auto w = (config.frameWidth + 1) / 2;
     auto h = (config.frameHeight + 1) / 2;
-    vx_image scaledImage = vxCreateImage(context, w, h, config.format /*VX_DF_IMAGE_RGBX*/);
-    NVXIO_CHECK_REFERENCE(scaledImage);
 
     //
     // Create a Render
@@ -111,7 +109,7 @@ int main(int argc, char** argv)
     //
     // Create OpenVX Image to hold frames from video source
     //
-    vx_image frameExemplar = vxCreateImage(context, config.frameWidth, config.frameHeight, config.format /*VX_DF_IMAGE_RGBX*/);
+    vx_image frameExemplar = vxCreateImage(context, w, h, config.format /*VX_DF_IMAGE_RGBX*/);
     NVXIO_CHECK_REFERENCE(frameExemplar);
 
     size_t nbFrameDelay = 2;
@@ -157,7 +155,7 @@ int main(int argc, char** argv)
         nvxio::FrameSource::FrameStatus status = nvxio::FrameSource::OK;
         if (!eventData.pause)
         {
-            status = source->fetch(currFrame);
+            status = source->fetch(fullResImage);
         }
 
         switch (status)
@@ -169,6 +167,9 @@ int main(int argc, char** argv)
             break;
         case nvxio::FrameSource::OK:
         {
+
+            vxuScaleImage(context, fullResImage, currFrame, VX_INTERPOLATION_TYPE_BILINEAR);
+
             double total_ms = totalTimer.toc();
             totalTimer.tic();
 
@@ -191,8 +192,6 @@ int main(int argc, char** argv)
             txt << "Esc - close the demo";
 
             //                ime.process();
-
-            vxuScaleImage(context, prevFrame, scaledImage, VX_INTERPOLATION_TYPE_BILINEAR);
 
             render->putImage(prevFrame);
 
@@ -224,7 +223,7 @@ int main(int argc, char** argv)
     //
     //vxReleaseImage(&currFrame);
 
-    vxReleaseImage(&scaledImage);
+    vxReleaseImage(&fullResImage);
     vxReleaseDelay(&frame_delay);
 
     return nvxio::Application::APP_EXIT_CODE_SUCCESS;
