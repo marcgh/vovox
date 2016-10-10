@@ -3,6 +3,7 @@
 #include <sstream>
 #include <iomanip>
 #include <memory>
+#include <list>
 
 #include <VX/vx.h>
 #include <NVX/nvx_timer.hpp>
@@ -48,7 +49,8 @@ int main(int argc, char** argv)
     config.fps = 30;
 
     app.init(argc, argv);
-  
+    std::list<std::function<void(void)>> callAtExit;
+
     //
     // Create OpenVX context
     //
@@ -85,9 +87,13 @@ int main(int argc, char** argv)
 
     vx_image fullResImage = vxCreateImage(context, config.frameWidth, config.frameHeight, config.format /*VX_DF_IMAGE_RGBX*/);
     NVXIO_CHECK_REFERENCE(fullResImage);
+    callAtExit.push_back([&]() { vxReleaseImage(&fullResImage);});
 
     auto w = (config.frameWidth + 1) / 2;
     auto h = (config.frameHeight + 1) / 2;
+
+    vx_image tmpImage = vxCreateImage(context, w, h, config.format /*VX_DF_IMAGE_RGBX*/);
+    NVXIO_CHECK_REFERENCE(tmpImage);
 
     //
     // Create a Render
@@ -109,16 +115,32 @@ int main(int argc, char** argv)
     //
     // Create OpenVX Image to hold frames from video source
     //
-    vx_image frameExemplar = vxCreateImage(context, w, h, config.format /*VX_DF_IMAGE_RGBX*/);
+    vx_image frameExemplar = vxCreateImage(context, w, h, VX_DF_IMAGE_U8 /*config.format*/ /*VX_DF_IMAGE_RGBX*/);
     NVXIO_CHECK_REFERENCE(frameExemplar);
 
     size_t nbFrameDelay = 2;
     vx_delay frame_delay = vxCreateDelay(context, (vx_reference)frameExemplar, nbFrameDelay);
     NVXIO_CHECK_REFERENCE(frame_delay);
     vxReleaseImage(&frameExemplar);
+    callAtExit.push_back([&]() { vxReleaseDelay(&frame_delay);});
 
     vx_image prevFrame = (vx_image)vxGetReferenceFromDelay(frame_delay, -nbFrameDelay + 1);
     vx_image currFrame = (vx_image)vxGetReferenceFromDelay(frame_delay, 0);
+
+    // Create a remap object
+    auto swapRemap = vxCreateRemap(context,w,h,w,h);
+    NVXIO_CHECK_REFERENCE(swapRemap);
+    for (auto y = 0; y < h; y++)
+        for (auto x = 0; x < w; x++)
+            if (VX_SUCCESS  != vxSetRemapPoint(swapRemap, x, y, w - x - 1, h - y - 1))
+                std::cout << "vxSetRemapPoint failed" << std::endl;
+    callAtExit.push_back([&]() { vxReleaseRemap(&swapRemap);});
+
+    // Color Convert
+    vx_image frame_gray = vxCreateImage(context, w, h, VX_DF_IMAGE_U8);
+    NVXIO_CHECK_REFERENCE(frame_gray);
+    callAtExit.push_back([&]() { vxReleaseImage(&frame_gray);});
+ 
 
 #if 0
     IterativeMotionEstimator ime(context);
@@ -167,8 +189,12 @@ int main(int argc, char** argv)
             break;
         case nvxio::FrameSource::OK:
         {
+            vx_status status;
+            NVXIO_SAFE_CALL(vxuScaleImage(context, fullResImage, tmpImage, VX_INTERPOLATION_TYPE_BILINEAR));
 
-            vxuScaleImage(context, fullResImage, currFrame, VX_INTERPOLATION_TYPE_BILINEAR);
+            NVXIO_SAFE_CALL(vxuColorConvert(context, tmpImage, frame_gray));
+
+            NVXIO_SAFE_CALL(vxuRemap(context, frame_gray, swapRemap, VX_INTERPOLATION_TYPE_NEAREST_NEIGHBOR, currFrame));
 
             double total_ms = totalTimer.toc();
             totalTimer.tic();
@@ -218,13 +244,11 @@ int main(int argc, char** argv)
         }
     }
 
+
     //
     // Release all objects
     //
-    //vxReleaseImage(&currFrame);
-
-    vxReleaseImage(&fullResImage);
-    vxReleaseDelay(&frame_delay);
+    for(auto& it: callAtExit) it();
 
     return nvxio::Application::APP_EXIT_CODE_SUCCESS;
 }
